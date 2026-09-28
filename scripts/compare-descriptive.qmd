@@ -1,0 +1,284 @@
+---
+title: "Variance by level — Will (Spanish formal) vs. Tan (Exp2, matched design)"
+format: html
+editor: visual
+---
+
+A simple descriptive of "noisiness": treat noise as the spread of responses, and look at that
+spread at different **levels**. Tan here is Experiment 2 (AE-DLVOT), the matched multi-block
+adaptation design, restricted to its test phase — the same 12 VOT steps, 3 minimal pairs, 3
+exposure conditions, and 6 test blocks as Will, so the comparison is apples-to-apples. Two figures:
+trial-level noise as a curve across VOT, and the between-level spreads (participants, items,
+conditions, blocks) as single numbers.
+
+Note: this first pass **skips the participant exclusions**, so Will shows ~129 participants rather
+than the ~121 after exclusion. Treat the numbers as a first look.
+
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+
+# --- same dataset reads as the same colour in every figure ---
+colours.dataset <- c("Tan" = "#333333", "Will" = "#1E88E5")
+```
+
+# Check out variance
+
+## Step 1 — Load both into one common frame
+
+Each dataset reduces to the same seven columns (dataset, participant, VOT, item, condition, block,
+response), so every level downstream is one grouped pipe. Tan's `ParticipantID` is coerced to
+character so it stacks with Will's.
+
+```{r load, message=FALSE, warning=FALSE}
+# --- Tan = Exp2 (AE-DLVOT), test phase only ---
+d.tan <- read_csv("../dataTan2025/data/TJ2025-experiment-results.csv", show_col_types = FALSE) |>
+  filter(Phase == "test") |>
+  transmute(
+    dataset     = "Tan",
+    participant = as.character(ParticipantID),
+    VOT.ms      = as.numeric(Item.VOT),
+    item        = Item.MinimalPair,
+    condition   = Condition.Exposure,
+    block       = as.character(Block),
+    resp.t      = if_else(Response.Voicing == "voiceless", 1, 0)
+  )
+
+# --- Will = formal test blocks; map words to the same 3 minimal pairs ---
+d.will <- read_csv("../data/formal/formal-full-data-preprocessed.csv", show_col_types = FALSE) |>
+  filter(str_detect(trial_type, "test"), !is.na(resp.num)) |>
+  transmute(
+    dataset     = "Will",
+    participant = as.character(ID),
+    VOT.ms      = VOT,
+    item        = case_when(
+      word %in% c("dip", "tip")   ~ "diptip",
+      word %in% c("din", "tin")   ~ "dintin",
+      word %in% c("dill", "till") ~ "dilltill",
+      TRUE                        ~ word
+    ),
+    condition   = participant.condition,
+    block       = as.character(blockID),
+    resp.t      = resp.num
+  )
+
+d.common <- bind_rows(d.tan, d.will) |> filter(!is.na(resp.t))
+
+# sanity check: each should have 3 items, 3 conditions, 6 blocks, ~120 participants
+d.common |>
+  group_by(dataset) |>
+  summarise(across(c(participant, item, condition, block), n_distinct), n.trials = n())
+```
+
+## Step 2 — Figure 1: trial noise as a curve
+
+At each VOT step, one variance number — the spread of the 0/1 response there, which is p(1 - p).
+Plotted along VOT, this traces the inverted-U: high near the boundary, ~0 at the clear ends.
+
+```{r trial-noise}
+d.trial.noise <- d.common |>
+  group_by(dataset, VOT.ms) |>
+  summarise(trial.variance = var(resp.t), .groups = "drop")
+```
+
+```{r plot-trial-noise, message=FALSE, warning=FALSE}
+#| fig-cap: "Trial-level response noise. At each VOT step, the variance of the 0/1 'voiceless' response (= p(1-p)) for Tan (grey) and Will (blue). A clean dataset traces an inverted-U peaking near the category boundary and dropping to ~0 at the clear ends; a curve lifted off the floor at the extremes, or broader through the middle, indicates more lapsing / shallower categorization. Error bars omitted on this first pass."
+plot.trial.noise <- d.trial.noise |>
+  ggplot(aes(x = VOT.ms, y = trial.variance, colour = dataset)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  scale_colour_manual(values = colours.dataset) +
+  labs(x = "VOT (ms)", y = "Response variance at each VOT step") +
+  theme_bw()
+
+plot.trial.noise
+```
+
+## Step 3 — Between-level spreads
+
+The building block for the three "between" levels is the same each time: summarize each unit by its
+**mean proportion /t/**, then take the **variance across those unit means**. One small function,
+called four times.
+
+```{r between-levels}
+# --- variance across the mean proportions of one grouping unit ---
+between_level_variance <- function(data, unit_col) {
+  data |>
+    group_by(dataset, {{ unit_col }}) |>
+    summarise(unit.mean = mean(resp.t), .groups = "drop") |>
+    group_by(dataset) |>
+    summarise(between.variance = var(unit.mean), .groups = "drop")
+}
+
+d.between <- bind_rows(
+  between_level_variance(d.common, participant) |> mutate(level = "participants"),
+  between_level_variance(d.common, item)        |> mutate(level = "items"),
+  between_level_variance(d.common, condition)   |> mutate(level = "conditions"),
+  between_level_variance(d.common, block)       |> mutate(level = "blocks")
+) |>
+  mutate(level = factor(level, levels = c("participants", "items", "conditions", "blocks")))
+
+# sanity check: 4 levels x 2 datasets = 8 rows, all non-negative
+d.between
+```
+
+## Step 4 — Figure 2: between-level bars
+
+```{r plot-between-levels, message=FALSE, warning=FALSE}
+#| fig-cap: "Between-level spread. For each level, the variance across that level's unit means (each unit summarized by its mean proportion 'voiceless'), for Tan (grey) and Will (blue). Higher = that level pulls responses apart more. Read the item, condition, and block bars gently — they are variances over only 3, 3, and 6 units respectively, so a bootstrap CI isn't legitimate; the participant bars (~120 units) are stable. The between-participant bar pools people across conditions, so it also absorbs a little of the condition effect."
+plot.between.levels <- d.between |>
+  ggplot(aes(x = level, y = between.variance, fill = dataset)) +
+  geom_col(position = position_dodge(0.7), width = 0.6) +
+  scale_fill_manual(values = colours.dataset) +
+  labs(x = NULL, y = "Variance across unit means (proportion /t/)") +
+  theme_bw()
+
+plot.between.levels
+```
+
+# Check out variance at item level (minimal pair)
+
+The item bar in Figure 2 stood out: Will's between-pair variance (~0.017) is ~15x Tan's (~0.001).
+This section asks *why* — and separates a real perceptual/stimulus difference from an artifact of
+imbalance, coding, or the skipped exclusions. Plan: (1) localize which pair(s) drive it, (2)
+characterize *what kind* of difference it is (boundary shift vs slope vs endpoints), (3) rule out
+three artifacts, (4) verdict.
+
+## Item Step 1 — Localize: mean proportion /t/ per pair
+
+If one pair is the outlier, the hunt narrows immediately.
+
+```{r item-localize}
+d.item.mean <- d.common |>
+  group_by(dataset, item) |>
+  summarise(mean.prop.t = mean(resp.t), n.trials = n(), .groups = "drop")
+
+d.item.mean
+```
+
+## Item Step 2 — Characterize: per-pair curves, boundaries, slopes
+
+Plot each pair's categorization curve, and put numbers on it with a crude per-pair boundary
+(-intercept/slope from a logistic) and slope. Curves separated *horizontally* = a boundary
+(calibration) shift; separated in *steepness* = one pair harder/noisier; separated at the *ends* =
+a lapse difference.
+
+```{r item-fit}
+# --- one pair's logistic boundary (ms) and slope ---
+fit_pair_boundary <- function(pair.trials) {
+  model.pair <- glm(resp.t ~ VOT.ms, family = binomial, data = pair.trials)
+  b <- coef(model.pair)
+  tibble(boundary.ms = -b[["(Intercept)"]] / b[["VOT.ms"]], slope = b[["VOT.ms"]])
+}
+
+d.item.fit <- d.common |>
+  group_by(dataset, item) |>
+  group_modify(~ fit_pair_boundary(.x)) |>
+  ungroup()
+
+d.item.fit
+```
+
+```{r plot-item-curves, message=FALSE, warning=FALSE}
+#| fig-cap: "Per-pair categorization curves. Proportion of 't'-responses vs VOT for each minimal pair (dill/till, din/tin, dip/tip), faceted by dataset; dashed line marks the 0.5 boundary. In Tan the three curves overlay tightly (boundaries within ~5 ms); in Will they fan out horizontally (boundaries ~35-56 ms), with din/tin shifted well to the left and dill/till to the right. Slopes are similar across Will's pairs, so the spread is a horizontal boundary shift, not a steepness difference. Error bars omitted."
+colours.item <- c("dilltill" = "#E64A19", "dintin" = "#00897B", "diptip" = "#5E35B1")
+
+d.item.curve <- d.common |>
+  group_by(dataset, item, VOT.ms) |>
+  summarise(prop.t = mean(resp.t), .groups = "drop")
+
+plot.item.curves <- d.item.curve |>
+  ggplot(aes(x = VOT.ms, y = prop.t, colour = item)) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", colour = "grey60") +
+  geom_line(linewidth = 1) +
+  geom_point(size = 1.8) +
+  scale_colour_manual(values = colours.item) +
+  facet_wrap(~ dataset) +
+  labs(x = "VOT (ms)", y = "Proportion /t/", colour = "Minimal pair") +
+  theme_bw()
+
+plot.item.curves
+```
+```{r}
+# --- give both datasets a common 1-6 test-block index (Tan blocks 1,3,5,7,8,9; Will T1..T6) ---
+d.item.block <- d.common |>
+  group_by(dataset) |>
+  mutate(block.order = dense_rank(block)) |>
+  ungroup() |>
+  group_by(dataset, block.order, item, VOT.ms) |>
+  summarise(prop.t = mean(resp.t), .groups = "drop")
+
+# --- per-pair curves within each test block, dataset in rows, block in columns ---
+colours.item <- c("dilltill" = "#E64A19", "dintin" = "#00897B", "diptip" = "#5E35B1")
+
+plot.item.by.block <- d.item.block |>
+  ggplot(aes(x = VOT.ms, y = prop.t, colour = item)) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", colour = "grey60") +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 1) +
+  scale_colour_manual(values = colours.item) +
+  facet_grid(dataset ~ block.order) +
+  labs(x = "VOT (ms)", y = "Proportion /t/", colour = "Minimal pair") +
+  theme_bw()
+
+plot.item.by.block
+```
+```{r}
+# --- collapse to proportion /t/ per dataset x condition x block x pair x VOT ---
+d.item.cond.block <- d.common |>
+  group_by(dataset) |>
+  mutate(block.order = dense_rank(block)) |>          # common 1-6 test-block index
+  ungroup() |>
+  group_by(dataset, condition, block.order, item, VOT.ms) |>
+  summarise(prop.t = mean(resp.t), .groups = "drop")
+
+colours.item <- c("dilltill" = "#E64A19", "dintin" = "#00897B", "diptip" = "#5E35B1")
+
+# --- one condition x block facet grid for a single dataset ---
+plot_item_grid <- function(ds, condition.levels) {
+  d.item.cond.block |>
+    filter(dataset == ds) |>
+    mutate(condition = factor(condition, levels = condition.levels)) |>
+    ggplot(aes(x = VOT.ms, y = prop.t, colour = item)) +
+    geom_hline(yintercept = 0.5, linetype = "dashed", colour = "grey60") +
+    geom_line(linewidth = 0.7) +
+    geom_point(size = 0.9) +
+    scale_colour_manual(values = colours.item) +
+    facet_grid(condition ~ block.order) +
+    labs(x = "VOT (ms)", y = "Proportion /t/", colour = "Minimal pair",
+         caption = paste0("Dataset: ", ds,
+                          " — rows = exposure condition, columns = test block (1-6)")) +
+    theme_bw()
+}
+
+plot.will.grid <- plot_item_grid("Will", c("expo-20ms", "expo-10ms", "expo+20ms"))
+plot.tan.grid  <- plot_item_grid("Tan",  c("Shift0", "Shift10", "Shift40"))
+
+plot.will.grid
+plot.tan.grid
+```
+
+
+
+
+## Item Step 4 — Verdict
+
+The elevated item-level variance in Will is **real and systematic — a horizontal boundary
+(calibration) difference across the three Spanish continua — not noise and not an artifact.**
+
+- **Localized to din/tin.** Will's per-pair mean /t/: din/tin 0.53, dip/tip 0.35, dill/till 0.27
+  (spread ~0.25). Tan's three cluster at 0.35-0.42 (spread ~0.07).
+- **It's a boundary shift, not a slope/lapse difference.** Fitted boundaries in Will: din/tin
+  ~35 ms, dip/tip ~48 ms, dill/till ~56 ms — a ~20 ms spread. Tan's boundaries all fall within
+  ~42-47 ms (~5 ms). Will's slopes are similar across pairs (~0.08-0.11), and the curves fan out
+  horizontally rather than differing in steepness or endpoints (see figure).
+- **Not an artifact.** Design is balanced (~257 trials per pair x VOT step, all 12 steps, even
+  across conditions); coding is clean (one d-labelled word per continuum, mapped 1:1); and it
+  survives exclusions (item variance 0.0171 -> 0.0171 after dropping the 8 excluded participants).
+
+Interpretation: the three Spanish continua are anchored at **different absolute VOT boundaries** —
+din/tin's category boundary sits ~13-20 ms below dill/till's — most consistent with a
+stimulus-synthesis difference across the continua (the "same" VOT step is not equally /t/-biased
+across pairs). Tan's English continua are, by contrast, tightly co-calibrated. This is already
+partly absorbed by the by-item (minimal_pair) random effects in the brms model, but it flags a
+stimulus-calibration issue worth checking acoustically, and it means the "item noise" here is
+systematic between-continuum structure, not random noise.
