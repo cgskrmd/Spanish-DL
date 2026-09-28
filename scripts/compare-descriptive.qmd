@@ -257,28 +257,3 @@ plot.will.grid
 plot.tan.grid
 ```
 
-
-
-
-## Item Step 4 — Verdict
-
-The elevated item-level variance in Will is **real and systematic — a horizontal boundary
-(calibration) difference across the three Spanish continua — not noise and not an artifact.**
-
-- **Localized to din/tin.** Will's per-pair mean /t/: din/tin 0.53, dip/tip 0.35, dill/till 0.27
-  (spread ~0.25). Tan's three cluster at 0.35-0.42 (spread ~0.07).
-- **It's a boundary shift, not a slope/lapse difference.** Fitted boundaries in Will: din/tin
-  ~35 ms, dip/tip ~48 ms, dill/till ~56 ms — a ~20 ms spread. Tan's boundaries all fall within
-  ~42-47 ms (~5 ms). Will's slopes are similar across pairs (~0.08-0.11), and the curves fan out
-  horizontally rather than differing in steepness or endpoints (see figure).
-- **Not an artifact.** Design is balanced (~257 trials per pair x VOT step, all 12 steps, even
-  across conditions); coding is clean (one d-labelled word per continuum, mapped 1:1); and it
-  survives exclusions (item variance 0.0171 -> 0.0171 after dropping the 8 excluded participants).
-
-Interpretation: the three Spanish continua are anchored at **different absolute VOT boundaries** —
-din/tin's category boundary sits ~13-20 ms below dill/till's — most consistent with a
-stimulus-synthesis difference across the continua (the "same" VOT step is not equally /t/-biased
-across pairs). Tan's English continua are, by contrast, tightly co-calibrated. This is already
-partly absorbed by the by-item (minimal_pair) random effects in the brms model, but it flags a
-stimulus-calibration issue worth checking acoustically, and it means the "item noise" here is
-systematic between-continuum structure, not random noise.
